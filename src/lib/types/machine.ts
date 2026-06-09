@@ -1,4 +1,5 @@
 import type { EnvVar, PortMapping, VolumeMount } from "./common";
+import type { SecretRefMapping, SecretRefView } from "./secret";
 
 /** Restart policy persisted into the `[restart]` Smolfile section. */
 export type RestartPolicy = "never" | "always" | "on-failure" | "unless-stopped";
@@ -57,6 +58,8 @@ export interface Machine {
   health_timeout_secs: number | null;
   health_retries: number | null;
   health_startup_grace_secs: number | null;
+  /** Secret refs persisted on the record (smolvm >= 0.9.0; empty on older). */
+  secret_refs: SecretRefView[];
 }
 
 export interface MachineInspect {
@@ -91,6 +94,15 @@ export interface MachineConfig {
   restart?: RestartSpec | null;
   /** Optional health-check spec; same mechanism as `restart`. */
   health?: HealthSpec | null;
+  /**
+   * Host-resolved secret refs injected as `--secret-env`/`--secret-file`
+   * (smolvm >= 1.0.0).
+   *
+   * NB: there is no `proxy` here — in smolvm >= 1.0.0 the image pull happens
+   * at start time, so `--proxy`/`--no-proxy` live on `machine run`/`start`,
+   * not `create` (see `RunConfig.proxy`).
+   */
+  secrets?: SecretRefMapping[];
 }
 
 export interface MachinePatch {
@@ -146,4 +158,10 @@ export interface RunConfig {
   restart?: RestartSpec | null;
   /** Optional health-check spec (same encoding as MachineConfig). */
   health?: HealthSpec | null;
+  /** Guest-env-var → stored-secret mappings (same encoding as MachineConfig). */
+  secrets?: SecretRefMapping[];
+  /** `--proxy` URL for the in-VM image pull (smolvm >= 0.9.0). */
+  proxy?: string | null;
+  /** `--no-proxy` comma-separated bypass list (smolvm >= 0.9.0). */
+  no_proxy?: string | null;
 }

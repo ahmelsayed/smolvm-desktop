@@ -1,12 +1,15 @@
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 
 /**
- * Editor model for smolvm 0.8.0's unified `~/.config/smolvm/config.toml`.
+ * Editor model for smolvm's unified `~/.config/smolvm/config.toml`
+ * (introduced in 0.8.0; per-entry `identity_token` editable since 0.9.0).
  *
  * The file has three namespaces — `[cloud]`, `[machines]`, `[images]` — and
  * contains login-managed secrets the UI must NOT edit but MUST preserve on
  * round-trip (`[cloud]` `refresh_token`/`token_expires_at`; per-entry
- * `identity_token`/`refresh_token`/`expires_at`).
+ * `refresh_token`/`expires_at`). The per-entry `identity_token` is editable
+ * (it can also be set by a login flow, which may later overwrite a manually
+ * entered value).
  *
  * Preservation strategy: we keep the FULL parsed object (`raw`) as the source
  * of truth. The structured editor reads/writes typed accessors over it, and on
@@ -15,8 +18,9 @@ import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
  * future fields, unknown top-level tables — survives untouched.
  */
 
-/** A registry entry (`[<ns>.registries."<host>"]`). Only username/password/
- *  password_env/mirror are user-editable; the rest are login-managed. */
+/** A registry entry (`[<ns>.registries."<host>"]`). username/password/
+ *  password_env/mirror/identity_token are user-editable; the rest are
+ *  login-managed. */
 export interface RegistryEntry {
   /** Hostname key, e.g. "docker.io". */
   host: string;
@@ -27,6 +31,13 @@ export interface RegistryEntry {
   password: string | null;
   /** Optional mirror URL. */
   mirror: string | null;
+  /**
+   * Upstream identity credential (e.g. an Auth0 JWT) exchanged for short-lived
+   * OCI bearer tokens. Takes precedence over password/password_env (smolvm
+   * 0.9.0+). Paired login-managed `refresh_token`/`expires_at` keys are
+   * preserved untouched.
+   */
+  identityToken: string | null;
 }
 
 /** One namespace's view: default registry + ordered entries. */
@@ -101,6 +112,7 @@ function parseNamespace(nsRaw: unknown): RegistryNamespace {
         passwordEnv: asString(value["password_env"]),
         password: asString(value["password"]),
         mirror: asString(value["mirror"]),
+        identityToken: asString(value["identity_token"]),
       });
     }
   }
@@ -218,6 +230,7 @@ function applyNamespace(
     applyOptional(block, "password_env", entry.passwordEnv);
     applyOptional(block, "password", entry.password);
     applyOptional(block, "mirror", entry.mirror);
+    applyOptional(block, "identity_token", entry.identityToken);
     nextRegs[entry.host] = block;
   }
   if (Object.keys(nextRegs).length > 0) {
@@ -244,7 +257,8 @@ function namespacesEqual(a: RegistryNamespace, b: RegistryNamespace): boolean {
       x.username !== y.username ||
       x.passwordEnv !== y.passwordEnv ||
       x.password !== y.password ||
-      x.mirror !== y.mirror
+      x.mirror !== y.mirror ||
+      x.identityToken !== y.identityToken
     ) {
       return false;
     }

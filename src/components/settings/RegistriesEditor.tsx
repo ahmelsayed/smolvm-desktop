@@ -613,6 +613,8 @@ interface RegistryCardProps {
 function RegistryCard({ entry, isDefault, onEdit, onRemove }: RegistryCardProps) {
   const usesEnv = entry.passwordEnv !== null && entry.passwordEnv.length > 0;
   const usesPlaintext = entry.password !== null && entry.password.length > 0;
+  const hasIdentityToken =
+    entry.identityToken !== null && entry.identityToken.length > 0;
 
   return (
     <div className="rounded-md border border-border bg-bg p-3">
@@ -664,6 +666,16 @@ function RegistryCard({ entry, isDefault, onEdit, onRemove }: RegistryCardProps)
         <dd className="font-mono break-all">
           {entry.mirror ?? <span className="text-fg-muted">(none)</span>}
         </dd>
+        {hasIdentityToken && (
+          <>
+            <dt className="text-fg-muted">Identity</dt>
+            <dd className="font-mono">
+              <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-accent">
+                token set
+              </span>
+            </dd>
+          </>
+        )}
       </dl>
       {usesEnv && usesPlaintext && (
         <div className="mt-2 flex items-start gap-1.5 rounded border border-starting/40 bg-starting/10 p-1.5 text-[11px] text-starting">
@@ -758,6 +770,16 @@ function RegistryEditModal({
 
   const [mirror, setMirror] = useState<string>(original?.mirror ?? "");
 
+  // Advanced: upstream identity token (smolvm 0.9.0+). Open the section when
+  // editing an entry that already has one.
+  const [identityToken, setIdentityToken] = useState<string>(
+    original?.identityToken ?? "",
+  );
+  const [showToken, setShowToken] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState<boolean>(
+    (original?.identityToken ?? "").length > 0,
+  );
+
   // Keep env var name in sync with hostname for new-or-untouched entries.
   useEffect(() => {
     if (envUserEdited) return;
@@ -777,7 +799,12 @@ function RegistryEditModal({
 
   const trimmedHost = host.trim();
   const trimmedEnvName = envName.trim();
+  const trimmedToken = identityToken.trim();
   const duplicateHost = !isEdit && existingHosts.some((h) => h === trimmedHost);
+  // An identity token is a complete credential on its own (it takes
+  // precedence over username/password upstream), so the basic-auth fields
+  // become optional when one is set.
+  const tokenOnly = trimmedToken.length > 0;
   const usernameMissing = username.length === 0;
 
   let validationError: string | null = null;
@@ -785,11 +812,11 @@ function RegistryEditModal({
     validationError = "Hostname is required.";
   } else if (duplicateHost) {
     validationError = `A registry for ${trimmedHost} already exists.`;
-  } else if (usernameMissing) {
-    validationError = "Username is required.";
-  } else if (authMode === "env" && trimmedEnvName.length === 0) {
+  } else if (usernameMissing && !tokenOnly) {
+    validationError = "Username is required (or set an identity token).";
+  } else if (!usernameMissing && authMode === "env" && trimmedEnvName.length === 0) {
     validationError = "Env var name is required.";
-  } else if (authMode === "plaintext" && password.length === 0) {
+  } else if (!usernameMissing && authMode === "plaintext" && password.length === 0) {
     validationError = "Password is required.";
   }
 
@@ -802,16 +829,24 @@ function RegistryEditModal({
     if (validationError !== null) return;
     // Preserve the unselected auth field when editing so we don't silently
     // strip an existing plaintext/env value the user chose not to touch.
+    // Basic-auth fields are only authored alongside a username (token-only
+    // entries shouldn't pick up the prefilled env-var suggestion); the
+    // unselected/unused auth field preserves any existing value so we don't
+    // silently strip what the user chose not to touch.
+    const hasUsername = username.length > 0;
     const next: RegistryEntry = {
       host: trimmedHost,
       username,
       passwordEnv:
-        authMode === "env"
+        hasUsername && authMode === "env" && trimmedEnvName.length > 0
           ? trimmedEnvName
           : (original?.passwordEnv ?? null),
       password:
-        authMode === "plaintext" ? password : (original?.password ?? null),
+        hasUsername && authMode === "plaintext" && password.length > 0
+          ? password
+          : (original?.password ?? null),
       mirror: mirror.trim().length === 0 ? null : mirror,
+      identityToken: trimmedToken.length === 0 ? null : trimmedToken,
     };
     onSubmit(next, isEdit ? (original?.host ?? null) : null);
   };
@@ -968,6 +1003,56 @@ function RegistryEditModal({
               {...noAutoCorrect}
               className="input w-full font-mono"
             />
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((v) => !v)}
+              className="inline-flex items-center gap-1 text-xs uppercase tracking-wide text-fg-muted hover:text-fg"
+            >
+              <ChevronsUpDown className="h-3.5 w-3.5" />
+              Advanced
+            </button>
+            {advancedOpen && (
+              <div className="mt-2 space-y-1">
+                <label className="mb-1 block text-xs uppercase tracking-wide text-fg-muted">
+                  Identity token{" "}
+                  <span className="normal-case text-fg-muted">
+                    (optional, smolvm 0.9+)
+                  </span>
+                </label>
+                <div className="relative">
+                  <input
+                    type={showToken ? "text" : "password"}
+                    value={identityToken}
+                    onChange={(e) => setIdentityToken(e.target.value)}
+                    placeholder="eyJ…"
+                    {...noAutoCorrect}
+                    className="input w-full pr-9 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowToken((v) => !v)}
+                    className="absolute inset-y-0 right-0 flex items-center px-2 text-fg-muted hover:text-fg"
+                    title={showToken ? "Hide token" : "Show token"}
+                  >
+                    {showToken ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-fg-muted">
+                  Upstream identity credential (e.g. an Auth0 JWT) exchanged
+                  for short-lived OCI bearer tokens. Takes precedence over the
+                  username/password auth above. A future{" "}
+                  <span className="font-mono">smolvm login</span> may overwrite
+                  a manually entered value.
+                </p>
+              </div>
+            )}
           </div>
 
           {validationError && (

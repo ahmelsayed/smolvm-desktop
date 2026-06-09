@@ -5,6 +5,9 @@
 //! CLI flags. Anything we put in the Smolfile would override the matching
 //! CLI flag — so we deliberately keep this blob minimal.
 //!
+//! (Secrets are *not* emitted here — they go on the argv as repeatable
+//! `--secret-env` / `--secret-file` flags; see `commands::machines`.)
+//!
 //! Schema reference (smolvm 0.7.2, `src/cli/smolfile.rs:208-272`):
 //! ```toml
 //! [health]

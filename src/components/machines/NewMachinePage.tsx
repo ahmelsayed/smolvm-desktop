@@ -20,7 +20,13 @@ import {
   validateRestartHealth,
   type RestartHealthState,
 } from "./RestartHealthEditor";
-import type { EnvVar, PortMapping, VolumeMount } from "@/lib/types";
+import type {
+  EnvVar,
+  PortMapping,
+  SecretRefMapping,
+  SecretSource,
+  VolumeMount,
+} from "@/lib/types";
 
 type Mode = "persistent" | "ephemeral";
 type Source = "image" | "pack" | "smolfile";
@@ -31,6 +37,7 @@ type ErrorField =
   | "smolfilePath"
   | "gpuVram"
   | "env"
+  | "secrets"
   | "policy"
   | null;
 
@@ -72,6 +79,12 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
   const [envVars, setEnvVars] = useState<EnvVar[]>([]);
   const [workdir, setWorkdir] = useState("");
   const [initCommands, setInitCommands] = useState("");
+  const [proxy, setProxy] = useState("");
+  const [noProxy, setNoProxy] = useState("");
+
+  // Host-resolved secret refs (smolvm >= 1.0.0): guest env var ← host env
+  // var or host file, injected via --secret-env / --secret-file.
+  const [secretRefs, setSecretRefs] = useState<SecretRefMapping[]>([]);
 
   const [gpu, setGpu] = useState(false);
   const [gpuVram, setGpuVram] = useState("");
@@ -90,6 +103,7 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
   const smolfilePathRef = useRef<HTMLInputElement>(null);
   const gpuVramRef = useRef<HTMLInputElement>(null);
   const envSectionRef = useRef<HTMLElement>(null);
+  const secretsSectionRef = useRef<HTMLElement>(null);
   const policySectionRef = useRef<HTMLElement>(null);
 
   const fail = (
@@ -195,6 +209,37 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
       .map((e) => ({ ...e, key: e.key.toUpperCase() }));
     const validAllowHosts = allowHosts.map((h) => h.trim()).filter(Boolean);
 
+    // Secret refs: a row with a host source value needs a valid guest env
+    // name, and file sources must be absolute paths (smolvm rejects relative).
+    const usedSecretRefs = secretRefs.filter((r) => r.value.trim().length > 0);
+    const invalidSecretRef = usedSecretRefs.find(
+      (r) => !isValidEnvKey(r.env_name),
+    );
+    if (invalidSecretRef) {
+      fail(
+        `Invalid guest env var name: "${invalidSecretRef.env_name}"`,
+        "secrets",
+        secretsSectionRef,
+      );
+      return;
+    }
+    const relativeFileRef = usedSecretRefs.find(
+      (r) => r.source === "file" && !r.value.trim().startsWith("/"),
+    );
+    if (relativeFileRef) {
+      fail(
+        `Secret file path must be absolute: "${relativeFileRef.value}"`,
+        "secrets",
+        secretsSectionRef,
+      );
+      return;
+    }
+    const validSecretRefs = usedSecretRefs.map((r) => ({
+      ...r,
+      env_name: r.env_name.toUpperCase(),
+      value: r.value.trim(),
+    }));
+
     const parsedGpuVram = gpuVram.trim() ? Number(gpuVram) : null;
     if (
       parsedGpuVram !== null &&
@@ -215,6 +260,11 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
     const gpuOrNull = gpu ? true : null;
     const gpuVramOrNull = gpu ? parsedGpuVram : null;
     const workdirOrNull = workdir.trim() || null;
+    // Proxy applies to the image pull, which in smolvm >= 1.0.0 happens at
+    // run/start — so it's only wired for ephemeral `machine run` here.
+    const proxyOrNull = mode === "ephemeral" && network ? proxy.trim() || null : null;
+    const noProxyOrNull =
+      mode === "ephemeral" && network ? noProxy.trim() || null : null;
 
     setSubmitting(true);
     try {
@@ -242,6 +292,7 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
             source === "smolfile" ? smolfilePath.trim() || null : null,
           restart: restartSpec,
           health: healthSpec,
+          secrets: validSecretRefs,
         });
       } else {
         await api.runMachine({
@@ -261,6 +312,9 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
           gpu_vram_mib: gpuVramOrNull,
           restart: restartSpec,
           health: healthSpec,
+          secrets: validSecretRefs,
+          proxy: proxyOrNull,
+          no_proxy: noProxyOrNull,
         });
       }
       await refresh();
@@ -570,6 +624,39 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
                   className="input resize-y font-mono disabled:opacity-50"
                 />
               </Field>
+              {/* Proxy applies to the image pull. In smolvm >= 1.0.0 a
+                  persistent machine pulls at start (no proxy input on the
+                  create flow), so we expose these only for ephemeral runs. */}
+              {mode === "ephemeral" && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field
+                    label="Image-pull proxy"
+                    hint={network ? "--proxy" : "requires Networking"}
+                  >
+                    <input
+                      {...noAutoCorrect}
+                      value={proxy}
+                      onChange={(e) => setProxy(e.target.value)}
+                      placeholder="http://proxy.internal:3128"
+                      disabled={!network}
+                      className="input font-mono disabled:opacity-50"
+                    />
+                  </Field>
+                  <Field
+                    label="No-proxy list"
+                    hint={network ? "--no-proxy, comma-separated" : "requires Networking"}
+                  >
+                    <input
+                      {...noAutoCorrect}
+                      value={noProxy}
+                      onChange={(e) => setNoProxy(e.target.value)}
+                      placeholder="127.0.0.1,localhost,.internal"
+                      disabled={!network}
+                      className="input font-mono disabled:opacity-50"
+                    />
+                  </Field>
+                </div>
+              )}
             </div>
           </Section>
 
@@ -620,6 +707,15 @@ export function NewMachinePage({ initialImage, onCancel, onCreated }: Props) {
                 </Field>
               )}
             </div>
+          </Section>
+
+          <Section
+            title="Secrets"
+            description="Inject a host env var or file as a guest env var — resolved on the host at launch, never stored in the machine record. Requires smolvm 1.0+."
+            sectionRef={secretsSectionRef}
+            highlighted={errorField === "secrets"}
+          >
+            <SecretRefEditor refs={secretRefs} onChange={setSecretRefs} />
           </Section>
 
           <Section
@@ -987,6 +1083,127 @@ const ENV_KEY_RE = /^[A-Z_][A-Z0-9_]*$/;
 
 export function isValidEnvKey(key: string): boolean {
   return ENV_KEY_RE.test(key);
+}
+
+/**
+ * Rows of `guest env var ← host source` secret refs. Each row injects either
+ * a host env var (`--secret-env`) or a host file's contents (`--secret-file`)
+ * as a guest env var; the value is resolved on the host at launch.
+ */
+function SecretRefEditor({
+  refs,
+  onChange,
+}: {
+  refs: SecretRefMapping[];
+  onChange: (v: SecretRefMapping[]) => void;
+}) {
+  const add = () =>
+    onChange([...refs, { env_name: "", source: "env", value: "" }]);
+  const update = (i: number, patch: Partial<SecretRefMapping>) =>
+    onChange(refs.map((r, j) => (i === j ? { ...r, ...patch } : r)));
+  const remove = (i: number) => onChange(refs.filter((_, j) => j !== i));
+
+  const browse = async (i: number) => {
+    const picked = await openDialog({ multiple: false });
+    if (typeof picked === "string") update(i, { value: picked });
+  };
+
+  return (
+    <div className="space-y-2">
+      {refs.map((r, i) => {
+        const keyTouched = r.env_name.length > 0;
+        const invalid = keyTouched && !isValidEnvKey(r.env_name);
+        const isFile = r.source === "file";
+        const relativeFile =
+          isFile && r.value.trim().length > 0 && !r.value.trim().startsWith("/");
+        return (
+          <div key={i}>
+            <div className="flex items-center gap-1.5">
+              <input
+                {...noAutoCorrect}
+                value={r.env_name}
+                onChange={(ev) =>
+                  update(i, { env_name: ev.target.value.toUpperCase() })
+                }
+                placeholder="GUEST_VAR"
+                aria-invalid={invalid}
+                className={`input w-44 font-mono uppercase ${
+                  invalid
+                    ? "border-stopped focus:border-stopped focus:ring-stopped"
+                    : ""
+                }`}
+              />
+              <span className="text-fg-muted">←</span>
+              <select
+                value={r.source}
+                onChange={(ev) =>
+                  update(i, { source: ev.target.value as SecretSource })
+                }
+                className="input w-24"
+              >
+                <option value="env">env</option>
+                <option value="file">file</option>
+              </select>
+              <div className="flex flex-1 gap-1">
+                <input
+                  {...noAutoCorrect}
+                  value={r.value}
+                  onChange={(ev) => {
+                    const value = ev.target.value;
+                    // Default the guest name from a host env var when untouched.
+                    const env_name =
+                      r.env_name.length === 0 && !isFile && value.length > 0
+                        ? value.toUpperCase().replace(/[^A-Z0-9_]/g, "_")
+                        : r.env_name;
+                    update(i, { value, env_name });
+                  }}
+                  placeholder={isFile ? "/abs/path/to/secret" : "HOST_VAR"}
+                  className="input flex-1 font-mono"
+                />
+                {isFile && (
+                  <button
+                    type="button"
+                    onClick={() => browse(i)}
+                    title="Browse"
+                    className="rounded-md border border-border bg-bg-card px-2 text-fg-muted hover:text-fg"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => remove(i)}
+                title="Remove"
+                className="rounded-md p-1 text-fg-muted hover:bg-stopped/20 hover:text-stopped"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            {invalid && (
+              <div className="mt-0.5 pl-1 text-[11px] text-stopped">
+                Must start with a letter or <code>_</code>, then letters,
+                digits, or <code>_</code>.
+              </div>
+            )}
+            {relativeFile && (
+              <div className="mt-0.5 pl-1 text-[11px] text-stopped">
+                File path must be absolute (start with <code>/</code>).
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={add}
+        className="inline-flex items-center gap-1 rounded-md border border-dashed border-border px-2 py-1 text-xs text-fg-muted hover:border-accent/60 hover:text-fg"
+      >
+        <Plus className="h-3.5 w-3.5" />
+        Add secret
+      </button>
+    </div>
+  );
 }
 
 function EnvEditor({

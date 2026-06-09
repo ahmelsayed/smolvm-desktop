@@ -3,7 +3,7 @@
 //! The CLI emits a JSON array whose shape is not fully stable; we read what we
 //! can and ignore unknown fields. A minimum of `name` + `status` is required.
 
-use crate::types::{Machine, MachineStatus, PortMapping, VolumeMount};
+use crate::types::{Machine, MachineStatus, PortMapping, SecretRefView, VolumeMount};
 use serde_json::Value;
 
 pub fn parse_machines(raw: &str) -> Result<Vec<Machine>, String> {
@@ -80,6 +80,23 @@ fn machine_from_value(v: &Value) -> Option<Machine> {
         .get("health_startup_grace_secs")
         .and_then(Value::as_u64);
 
+    // Secret refs persisted on the record (smolvm >= 0.9.0; from_store
+    // removed in 1.0.0): an object of `ENV_NAME: { from_env | from_file:
+    // "<target>" }`. Absent on older versions → empty vec.
+    let secret_refs = obj
+        .get("secret_refs")
+        .and_then(Value::as_object)
+        .map(|refs| {
+            let mut out: Vec<SecretRefView> = refs
+                .iter()
+                .filter_map(|(env_name, r)| secret_ref_from_value(env_name, r))
+                .collect();
+            // serde_json maps don't guarantee order; sort for a stable UI.
+            out.sort_by(|a, b| a.env_name.cmp(&b.env_name));
+            out
+        })
+        .unwrap_or_default();
+
     Some(Machine {
         name,
         status,
@@ -100,6 +117,25 @@ fn machine_from_value(v: &Value) -> Option<Machine> {
         health_timeout_secs,
         health_retries,
         health_startup_grace_secs,
+        secret_refs,
+    })
+}
+
+/// Map one `secret_refs` entry to a view. Exactly one source key is set on a
+/// well-formed ref; pick the first known one and label it.
+fn secret_ref_from_value(env_name: &str, v: &Value) -> Option<SecretRefView> {
+    let obj = v.as_object()?;
+    let (source, target) = [("env", "from_env"), ("file", "from_file")]
+        .iter()
+        .find_map(|(label, key)| {
+            obj.get(*key)
+                .and_then(Value::as_str)
+                .map(|t| (label.to_string(), t.to_string()))
+        })?;
+    Some(SecretRefView {
+        env_name: env_name.to_string(),
+        source,
+        target,
     })
 }
 

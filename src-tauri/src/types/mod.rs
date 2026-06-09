@@ -7,9 +7,11 @@
 mod common;
 mod machine;
 mod pack;
+mod secret;
 mod system;
 
 pub use common::*;
 pub use machine::*;
 pub use pack::*;
+pub use secret::*;
 pub use system::*;

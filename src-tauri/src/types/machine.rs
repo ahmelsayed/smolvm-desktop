@@ -1,4 +1,5 @@
 use super::common::{EnvVar, PortMapping, VolumeMount};
+use super::secret::{SecretRefMapping, SecretRefView};
 use serde::{Deserialize, Serialize};
 
 /// Restart policy persisted into a VM's `[restart]` Smolfile section.
@@ -108,6 +109,10 @@ pub struct Machine {
     pub health_retries: Option<u32>,
     #[serde(default)]
     pub health_startup_grace_secs: Option<u64>,
+    /// Secret references persisted on the record, exposed by
+    /// `machine ls --json` on smolvm >= 0.9.0. Empty on older versions.
+    #[serde(default)]
+    pub secret_refs: Vec<SecretRefView>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +164,10 @@ pub struct MachineConfig {
     /// `restart` into the same generated Smolfile.
     #[serde(default)]
     pub health: Option<HealthSpec>,
+    /// Host-resolved secret refs injected as `--secret-env`/`--secret-file`
+    /// (smolvm >= 1.0.0).
+    #[serde(default)]
+    pub secrets: Vec<SecretRefMapping>,
 }
 
 /// Patch sent to `machine update`. Only fields with `Some(_)` (or non-empty
@@ -275,4 +284,14 @@ pub struct RunConfig {
     /// Optional health-check spec.
     #[serde(default)]
     pub health: Option<HealthSpec>,
+    /// Guest-env-var → stored-secret mappings (same encoding as
+    /// `MachineConfig::secrets`).
+    #[serde(default)]
+    pub secrets: Vec<SecretRefMapping>,
+    /// `--proxy` URL for the in-VM image pull (smolvm >= 0.9.0).
+    #[serde(default)]
+    pub proxy: Option<String>,
+    /// `--no-proxy` comma-separated bypass list (smolvm >= 0.9.0).
+    #[serde(default)]
+    pub no_proxy: Option<String>,
 }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Copy, Loader2, Pencil, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Loader2, Pencil, Play, RotateCcw, Square, Trash2 } from "lucide-react";
 import type { Machine } from "@/lib/types";
 import { useMachinesStore } from "@/hooks/useMachines";
 import { useMachineDetailTab } from "@/hooks/useMachineDetailTab";
@@ -97,6 +97,18 @@ export function MachineDetail({ machine, onBack }: Props) {
                 <span className="font-mono text-xs">· PID {machine.pid}</span>
               )}
               <span>· network {machine.network ? "on" : "off"}</span>
+              {machine.secret_refs.length > 0 && (
+                <span
+                  className="inline-flex items-center gap-1"
+                  title={machine.secret_refs
+                    .map((r) => `${r.env_name} ← ${r.source}:${r.target}`)
+                    .join("\n")}
+                >
+                  · <KeyRound className="h-3.5 w-3.5" />
+                  {machine.secret_refs.length} secret
+                  {machine.secret_refs.length === 1 ? "" : "s"}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex gap-2">

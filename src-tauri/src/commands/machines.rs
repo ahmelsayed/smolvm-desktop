@@ -57,6 +57,27 @@ fn maybe_append_policy_smolfile(
     Ok(Some(guard))
 }
 
+/// Append `--secret-env GUEST=HOST_VAR` / `--secret-file GUEST=/abs/path`
+/// flags (smolvm >= 1.0.0). The value is resolved on the host at launch and
+/// never persisted to the machine record. Rows with a blank guest name or
+/// blank source value are skipped; the UI validates upstream.
+fn append_secret_flags(args: &mut Vec<String>, secrets: &[crate::types::SecretRefMapping]) {
+    for s in secrets {
+        let key = s.env_name.trim();
+        let value = s.value.trim();
+        if key.is_empty() || value.is_empty() {
+            continue;
+        }
+        let flag = match s.source.as_str() {
+            "file" => "--secret-file",
+            // Default to env for "env" and any unexpected value.
+            _ => "--secret-env",
+        };
+        args.push(flag.into());
+        args.push(format!("{key}={value}"));
+    }
+}
+
 #[tauri::command]
 pub async fn list_machines() -> Result<Vec<Machine>, String> {
     let json = cli::run_checked(&["machine", "ls", "-v", "--json"]).await?;
@@ -194,6 +215,12 @@ pub async fn create_machine(config: MachineConfig) -> Result<Machine, String> {
         args.push("--gpu-vram".into());
         args.push(vram.to_string());
     }
+    // NB: `--proxy`/`--no-proxy` are NOT accepted by `machine create` in
+    // smolvm >= 1.0.0 — the image pull happens at start/run time, so those
+    // flags live on `machine run`/`machine start` instead (see run_machine).
+    // Host-resolved secret refs (smolvm >= 1.0.0) compose additively with any
+    // source, including a user-supplied `--smolfile`.
+    append_secret_flags(&mut args, &config.secrets);
     // Policy authored in the dialog → generate a tiny policy-only Smolfile
     // and append `--smolfile <tempfile>`. Skip when the user already picked
     // a Smolfile source: their file is authoritative for restart/health
@@ -411,6 +438,18 @@ pub async fn run_machine(config: RunConfig) -> Result<String, String> {
         args.push("--gpu-vram".into());
         args.push(vram.to_string());
     }
+    // Image-pull proxy. `machine run` performs the pull, so the flags live
+    // here (not on `create`, which doesn't pull in smolvm >= 1.0.0).
+    if let Some(proxy) = config.proxy.as_ref().and_then(trim_to_some) {
+        args.push("--proxy".into());
+        args.push(proxy);
+    }
+    if let Some(no_proxy) = config.no_proxy.as_ref().and_then(trim_to_some) {
+        args.push("--no-proxy".into());
+        args.push(no_proxy);
+    }
+    // Host-resolved secret refs (smolvm >= 1.0.0); see create_machine.
+    append_secret_flags(&mut args, &config.secrets);
     // Policy authored in the dialog (ephemeral path). Same mechanism as
     // `create_machine`: write a tiny policy-only Smolfile, append
     // `--smolfile`. `pack run` / `machine run -d` accept it. Held alive

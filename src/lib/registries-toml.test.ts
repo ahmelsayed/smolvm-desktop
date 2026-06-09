@@ -124,6 +124,42 @@ identity_token = "tok"
   expect(entry.identity_token).toBe("tok");
 });
 
+test("identity_token is editable: set, change, and clear round-trip", () => {
+  const src = `[images.registries."ghcr.io"]
+username = "u"
+password_env = "GHCR_TOKEN"
+refresh_token = "rt_managed"
+`;
+  const cfg = parse(src);
+  expect(cfg.images.registries[0]!.identityToken).toBeNull();
+
+  // Set a token; managed refresh_token sibling must survive.
+  cfg.images.registries[0]!.identityToken = "id_new";
+  let reparsed = parseToml(stringify(cfg)) as Record<string, any>;
+  let entry = reparsed.images.registries["ghcr.io"];
+  expect(entry.identity_token).toBe("id_new");
+  expect(entry.refresh_token).toBe("rt_managed");
+
+  // Clear it; the key is deleted, siblings stay.
+  const cfg2 = parse(stringify(cfg));
+  cfg2.images.registries[0]!.identityToken = null;
+  reparsed = parseToml(stringify(cfg2)) as Record<string, any>;
+  entry = reparsed.images.registries["ghcr.io"];
+  expect(entry.identity_token).toBeUndefined();
+  expect(entry.username).toBe("u");
+  expect(entry.refresh_token).toBe("rt_managed");
+});
+
+test("equals is dirty-aware on identityToken", () => {
+  const cfg = parse(`[images.registries."ghcr.io"]
+username = "u"
+`);
+  const b = cloneConfig(cfg);
+  expect(equals(cfg, b)).toBe(true);
+  b.images.registries[0]!.identityToken = "tok";
+  expect(equals(cfg, b)).toBe(false);
+});
+
 test("equals is dirty-aware on editable fields only", () => {
   const a = parse(FIXTURE);
   const b = cloneConfig(a);
