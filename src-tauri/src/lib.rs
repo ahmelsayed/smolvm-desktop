@@ -71,6 +71,7 @@ pub fn run() {
             commands::pack::pull_pack,
             commands::pack::prune_packs,
             commands::smolfile::fetch_smolfile_from_url,
+            commands::terminal::open_external_terminal,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

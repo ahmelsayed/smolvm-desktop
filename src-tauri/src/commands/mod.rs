@@ -10,3 +10,4 @@ pub mod stats;
 pub mod supervisor;
 pub mod system;
 pub mod tasks;
+pub mod terminal;

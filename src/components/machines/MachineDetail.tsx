@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Check, Copy, KeyRound, Loader2, Pencil, Play, RotateCcw, Square, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Loader2, Pencil, Play, RotateCcw, Square, Terminal, Trash2 } from "lucide-react";
 import type { Machine } from "@/lib/types";
 import { useMachinesStore } from "@/hooks/useMachines";
 import { useMachineDetailTab } from "@/hooks/useMachineDetailTab";
+import { useErrorModal } from "@/hooks/useErrorModal";
 import { getConfirmDestructive } from "@/components/settings/SettingsView";
 import { StatusBadge } from "@/components/shared/Badge";
 import { Tabs } from "@/components/shared/Tabs";
+import { api } from "@/lib/invoke";
 import { InspectTab } from "./tabs/InspectTab";
 import { PortsTab } from "./tabs/PortsTab";
 import { LogsTab } from "./tabs/LogsTab";
@@ -52,8 +54,17 @@ export function MachineDetail({ machine, onBack }: Props) {
   const { start, stop, remove } = useMachinesStore();
   const pending = useMachinesStore((s) => s.pending[machine.name]);
   const running = machine.status === "running" || machine.status === "starting";
+  const canTerminal = machine.status === "running";
   const busy = pending !== undefined;
   const Spinner = <Loader2 className="h-4 w-4 animate-spin" />;
+
+  const openTerminal = () => {
+    api.openExternalTerminal(machine.name).catch((e) =>
+      useErrorModal
+        .getState()
+        .show(`Open terminal for "${machine.name}" failed`, e),
+    );
+  };
 
   const handleDelete = () => {
     if (getConfirmDestructive() && !confirm(`Delete machine "${machine.name}"?`)) return;
@@ -112,6 +123,17 @@ export function MachineDetail({ machine, onBack }: Props) {
             </div>
           </div>
           <div className="flex gap-2">
+            <ActionBtn
+              icon={<Terminal className="h-4 w-4" />}
+              label="Terminal"
+              disabled={!canTerminal || busy}
+              title={
+                canTerminal
+                  ? "Open an external terminal"
+                  : "Start the machine to open a terminal."
+              }
+              onClick={openTerminal}
+            />
             <ActionBtn
               icon={toggle.icon}
               label={toggle.label}

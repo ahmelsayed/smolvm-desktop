@@ -110,6 +110,15 @@ fn build_menu(
                 )?;
                 machine_menu.append(&item)?;
             }
+            // Terminal is only meaningful while the machine is running.
+            let terminal = MenuItem::with_id(
+                app,
+                format!("machine:terminal:{name}"),
+                "Open Terminal",
+                matches!(status, MachineStatus::Running),
+                None::<&str>,
+            )?;
+            machine_menu.append(&terminal)?;
             machine_menu.append(&PredefinedMenuItem::separator(app)?)?;
             let action = if is_running {
                 MenuItem::with_id(
@@ -189,6 +198,10 @@ fn handle_menu_event(app: &AppHandle, event: MenuEvent) {
                         "tray:focus-machine",
                         serde_json::json!({ "name": name, "tab": tab }),
                     );
+                }
+            } else if let Some(name) = other.strip_prefix("machine:terminal:") {
+                if let Err(e) = commands::terminal::open_external_terminal(name.to_string()) {
+                    eprintln!("open terminal failed: {e}");
                 }
             } else if let Some(name) = other.strip_prefix("machine:stop:") {
                 let name = name.to_string();

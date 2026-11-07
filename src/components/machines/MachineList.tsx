@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { ChevronRight, Loader2, Play, Plus, RefreshCw, RotateCcw, Square, Trash2 } from "lucide-react";
+import { ChevronRight, Loader2, Play, Plus, RefreshCw, RotateCcw, Square, Terminal, Trash2 } from "lucide-react";
 import { useMachinesStore } from "@/hooks/useMachines";
 import { useMachineDetailTab } from "@/hooks/useMachineDetailTab";
+import { useErrorModal } from "@/hooks/useErrorModal";
 import { getConfirmDestructive } from "@/components/settings/SettingsView";
 import { StatusBadge } from "@/components/shared/Badge";
+import { api } from "@/lib/invoke";
 import type { Machine } from "@/lib/types";
 
 interface Props {
@@ -302,6 +304,18 @@ function MachineRow({
       <td className="px-6 py-3" onClick={stopClick}>
         <div className="flex justify-end gap-1">
           <ActionIcon
+            title={
+              machine.status === "running"
+                ? "Open terminal"
+                : "Start the machine to open a terminal"
+            }
+            busy={busy}
+            active={false}
+            disabled={machine.status !== "running"}
+            icon={<Terminal className="h-4 w-4" />}
+            onClick={() => void openTerminal(machine.name)}
+          />
+          <ActionIcon
             title={toggle.title}
             pendingLabel={toggle.label}
             busy={busy}
@@ -340,6 +354,16 @@ function MachineRow({
 function formatPorts(ports: Machine["ports"]): string {
   if (ports.length === 0) return "—";
   return ports.map((p) => `${p.host}:${p.guest}/${p.protocol}`).join(", ");
+}
+
+async function openTerminal(name: string) {
+  try {
+    await api.openExternalTerminal(name);
+  } catch (e) {
+    useErrorModal
+      .getState()
+      .show(`Open terminal for "${name}" failed`, e);
+  }
 }
 
 function ActionIcon({

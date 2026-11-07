@@ -235,7 +235,7 @@ pub fn binary_path() -> Option<String> {
 /// PATH lookup that only accepts regular files. In particular, it must skip a
 /// *directory* named like the binary: `execve` on a directory fails with
 /// EACCES, and portable-pty's own lookup would prefer `<cwd>/<name>`.
-fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<String> {
+pub(crate) fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<String> {
     for dir in std::env::split_paths(path) {
         let candidate = dir.join(name);
         if candidate.is_file() {

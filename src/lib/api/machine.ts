@@ -27,4 +27,7 @@ export const machineApi = {
   superviseStatus: (name: string) =>
     invoke<SupervisorStatus | null>("supervise_status", { name }),
   listSupervised: () => invoke<string[]>("list_supervised"),
+  /** Open `smolvm machine shell` in an external terminal window. */
+  openExternalTerminal: (name: string) =>
+    invoke<void>("open_external_terminal", { name }),
 };
