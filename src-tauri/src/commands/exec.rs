@@ -114,7 +114,21 @@ pub async fn exec_start(
         })
         .map_err(|e| format!("openpty: {e}"))?;
 
-    let mut builder = CommandBuilder::new(cli::current_binary());
+    // Resolve the binary to an absolute *file* path before handing it to
+    // portable-pty. Its PATH lookup checks `<cwd>/<program>` first and accepts
+    // any existing path — including a directory named `smolvm` (a very common
+    // home-directory name). `execve` on a directory returns EACCES, and
+    // portable-pty's `close_random_fds` has already closed Rust's CLOEXEC
+    // error pipe, so the child aborts inside std instead of returning the
+    // error. `binary_path()` only returns regular files.
+    let bin = cli::binary_path().ok_or_else(|| {
+        format!(
+            "`{}` was not found on PATH; set the smolvm binary in Settings",
+            cli::current_binary()
+        )
+    })?;
+
+    let mut builder = CommandBuilder::new(bin.as_str());
     let mut user_args: Vec<String> = vec![
         "machine".into(),
         "exec".into(),

@@ -221,16 +221,61 @@ pub fn binary_path() -> Option<String> {
     if p.is_absolute() || bin.contains('/') {
         return if p.is_file() { Some(bin) } else { None };
     }
-    which(&bin)
+    // Honor a PATH supplied through the binary override (later entries win,
+    // matching the order `Command::env` applies).
+    let path = current_env()
+        .into_iter()
+        .rev()
+        .find(|(k, _)| k.as_str() == "PATH")
+        .map(|(_, v)| std::ffi::OsString::from(v))
+        .or_else(|| std::env::var_os("PATH"))?;
+    which_in(&bin, &path)
 }
 
-fn which(name: &str) -> Option<String> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
+/// PATH lookup that only accepts regular files. In particular, it must skip a
+/// *directory* named like the binary: `execve` on a directory fails with
+/// EACCES, and portable-pty's own lookup would prefer `<cwd>/<name>`.
+fn which_in(name: &str, path: &std::ffi::OsStr) -> Option<String> {
+    for dir in std::env::split_paths(path) {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return candidate.to_str().map(|s| s.to_string());
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn which_skips_directories_named_like_the_binary() {
+        let root = std::env::temp_dir().join(format!(
+            "smolvm-which-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let first = root.join("has-dir");
+        let second = root.join("has-file");
+        // A directory named `smolvm` on PATH must not be selected.
+        std::fs::create_dir_all(first.join("smolvm")).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let real = second.join("smolvm");
+        std::fs::write(&real, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let path = std::env::join_paths([first, second]).unwrap();
+        let found = which_in("smolvm", &path).expect("smolvm in PATH");
+        assert_eq!(std::path::Path::new(&found), real.as_path());
+
+        std::fs::remove_dir_all(&root).ok();
+    }
 }
