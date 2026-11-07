@@ -21,8 +21,21 @@ fn registry() -> &'static Mutex<HashMap<String, watch::Sender<bool>>> {
     R.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// `smolvm machine data-dir` requires `--name <NAME>`; the machine name is not
+/// accepted positionally.
+fn data_dir_args(name: &str) -> Vec<String> {
+    vec![
+        "machine".into(),
+        "data-dir".into(),
+        "--name".into(),
+        name.to_string(),
+    ]
+}
+
 async fn data_dir(name: &str) -> Result<PathBuf, String> {
-    let out = cli::run_checked(&["machine", "data-dir", name]).await?;
+    let args = data_dir_args(name);
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = cli::run_checked(&arg_refs).await?;
     Ok(PathBuf::from(out.trim()))
 }
 
@@ -131,5 +144,18 @@ pub async fn machine_log_stop(name: String) -> Result<(), String> {
 fn stop_follow(name: &str) {
     if let Some(tx) = registry().lock().unwrap().remove(name) {
         let _ = tx.send(true);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn data_dir_passes_name_as_flag() {
+        assert_eq!(
+            data_dir_args("default"),
+            vec!["machine", "data-dir", "--name", "default"]
+        );
     }
 }
