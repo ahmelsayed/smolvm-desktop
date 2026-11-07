@@ -73,22 +73,16 @@ function workdirFromInspect(raw: unknown): string {
   return typeof v === "string" ? v : "";
 }
 
-function gpuFromInspect(raw: unknown): { gpu: boolean; vram: number | null } {
-  if (!raw || typeof raw !== "object") return { gpu: false, vram: null };
+function gpuFromInspect(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
   const obj = raw as Record<string, unknown>;
   const gpuRaw = obj.gpu;
-  let gpu = false;
-  let vram: number | null = null;
-  if (typeof gpuRaw === "boolean") gpu = gpuRaw;
-  else if (gpuRaw && typeof gpuRaw === "object") {
+  if (typeof gpuRaw === "boolean") return gpuRaw;
+  if (gpuRaw && typeof gpuRaw === "object") {
     const g = gpuRaw as Record<string, unknown>;
-    if (typeof g.enabled === "boolean") gpu = g.enabled;
-    const vramVal = g.vram_mib ?? g.vramMib ?? g.vram;
-    if (typeof vramVal === "number") vram = vramVal;
+    if (typeof g.enabled === "boolean") return g.enabled;
   }
-  const topVram = obj.gpu_vram_mib ?? obj.gpuVramMib;
-  if (vram === null && typeof topVram === "number") vram = topVram;
-  return { gpu, vram };
+  return false;
 }
 
 function numFromInspect(raw: unknown, ...keys: string[]): number | null {
@@ -129,8 +123,6 @@ export function EditMachineDialog({ open, machine, onClose, onUpdated }: Props) 
   const [origWorkdir, setOrigWorkdir] = useState("");
   const [gpu, setGpu] = useState(false);
   const [origGpu, setOrigGpu] = useState(false);
-  const [gpuVram, setGpuVram] = useState("");
-  const [origGpuVram, setOrigGpuVram] = useState<number | null>(null);
   const [storage, setStorage] = useState("");
   const [origStorage, setOrigStorage] = useState<number | null>(null);
   const [overlay, setOverlay] = useState("");
@@ -183,11 +175,9 @@ export function EditMachineDialog({ open, machine, onClose, onUpdated }: Props) 
         const wd = workdirFromInspect(raw);
         setWorkdir(wd);
         setOrigWorkdir(wd);
-        const g = gpuFromInspect(raw);
-        setGpu(g.gpu);
-        setOrigGpu(g.gpu);
-        setGpuVram(g.vram !== null ? String(g.vram) : "");
-        setOrigGpuVram(g.vram);
+        const gpuEnabled = gpuFromInspect(raw);
+        setGpu(gpuEnabled);
+        setOrigGpu(gpuEnabled);
         const st = numFromInspect(raw, "storage_gib", "storageGib", "storage");
         setStorage(st !== null ? String(st) : "");
         setOrigStorage(st);
@@ -238,10 +228,6 @@ export function EditMachineDialog({ open, machine, onClose, onUpdated }: Props) 
     if (wdTrim !== origWorkdir.trim() && wdTrim) patch.workdir = wdTrim;
 
     if (gpu !== origGpu) patch.gpu = gpu;
-    const parsedVram = gpuVram.trim() ? Number(gpuVram) : null;
-    if (parsedVram !== origGpuVram && parsedVram !== null) {
-      patch.gpu_vram_mib = parsedVram;
-    }
 
     const parsedStorage = storage.trim() ? Number(storage) : null;
     if (parsedStorage !== origStorage && parsedStorage !== null) {
@@ -381,18 +367,6 @@ export function EditMachineDialog({ open, machine, onClose, onUpdated }: Props) 
             <Checkbox checked={network} onChange={setNetwork} label="Networking (--net)" />
             <Checkbox checked={gpu} onChange={setGpu} label="GPU" />
           </div>
-
-          {gpu && (
-            <Field label="GPU VRAM (MiB)" hint="optional">
-              <input
-                value={gpuVram}
-                onChange={(e) => setGpuVram(e.target.value)}
-                placeholder="2048"
-                inputMode="numeric"
-                className="input"
-              />
-            </Field>
-          )}
 
           <div className="grid grid-cols-2 gap-3">
             <Field label="Storage (GiB)" hint="root disk">

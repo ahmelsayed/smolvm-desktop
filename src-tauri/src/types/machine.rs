@@ -186,8 +186,6 @@ pub struct MachinePatch {
     #[serde(default)]
     pub gpu: Option<bool>,
     #[serde(default)]
-    pub gpu_vram_mib: Option<u32>,
-    #[serde(default)]
     pub storage_gib: Option<u32>,
     #[serde(default)]
     pub overlay_gib: Option<u32>,

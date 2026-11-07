@@ -166,11 +166,14 @@ fn port_from_value(v: &Value) -> Option<PortMapping> {
 }
 
 /// Per-machine extras scraped from `smolvm machine ls -v` (text form),
-/// since the JSON variant omits env vars and mount details.
+/// since the JSON variant reports only counts for mounts/ports and omits the
+/// created timestamp and env vars.
 #[derive(Default)]
 pub struct MachineExtras {
     pub env_count: u32,
     pub mounts: Vec<VolumeMount>,
+    pub ports: Vec<PortMapping>,
+    pub created: Option<String>,
 }
 
 /// Parse `smolvm machine ls -v` text output.
@@ -211,6 +214,12 @@ pub fn parse_machine_extras(raw: &str) -> std::collections::HashMap<String, Mach
             if let Some(mount) = parse_mount_line(rest.trim()) {
                 out.entry(name.clone()).or_default().mounts.push(mount);
             }
+        } else if let Some(rest) = body.strip_prefix("Port:") {
+            if let Some(port) = parse_port_line(rest.trim()) {
+                out.entry(name.clone()).or_default().ports.push(port);
+            }
+        } else if let Some(rest) = body.strip_prefix("Created:") {
+            out.entry(name.clone()).or_default().created = Some(rest.trim().to_string());
         }
     }
     out
@@ -231,6 +240,26 @@ fn parse_mount_line(s: &str) -> Option<VolumeMount> {
     })
 }
 
+/// Parse a port line body like `3000 -> 3000`, `3000 -> 3000/udp`, or
+/// `3000 -> 3000 (udp)`. Port ranges are skipped: [`PortMapping`] holds a
+/// single host/guest pair.
+fn parse_port_line(s: &str) -> Option<PortMapping> {
+    let (host, rest) = s.split_once("->")?;
+    let rest = rest.trim();
+    let (guest, protocol) = if let Some(g) = rest.strip_suffix("/udp") {
+        (g.trim(), "udp")
+    } else if let Some(g) = rest.strip_suffix("(udp)") {
+        (g.trim(), "udp")
+    } else {
+        (rest, "tcp")
+    };
+    Some(PortMapping {
+        host: host.trim().parse().ok()?,
+        guest: guest.parse().ok()?,
+        protocol: protocol.to_string(),
+    })
+}
+
 fn parse_status(s: &str) -> MachineStatus {
     match s.to_ascii_lowercase().as_str() {
         "running" | "started" => MachineStatus::Running,
@@ -240,5 +269,39 @@ fn parse_status(s: &str) -> MachineStatus {
         "exited" | "finished" => MachineStatus::Exited,
         "unreachable" => MachineStatus::Unreachable,
         _ => MachineStatus::Unknown,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_port_lines() {
+        let tcp = parse_port_line("3000 -> 8080").unwrap();
+        assert_eq!(
+            (tcp.host, tcp.guest, tcp.protocol.as_str()),
+            (3000u16, 8080u16, "tcp")
+        );
+
+        let udp = parse_port_line("3000 -> 8080/udp").unwrap();
+        assert_eq!(
+            (udp.host, udp.guest, udp.protocol.as_str()),
+            (3000u16, 8080u16, "udp")
+        );
+
+        let udp_paren = parse_port_line("3000 -> 8080 (udp)").unwrap();
+        assert_eq!(udp_paren.protocol, "udp");
+    }
+
+    #[test]
+    fn parses_extras_ports_and_created() {
+        let raw = "NAME    STATE\nvm1     running    4\n  Port: 3000 -> 8080\n  Created: 2026-11-07T20:42:06Z\n";
+        let extras = parse_machine_extras(raw);
+        let e = extras.get("vm1").expect("vm1 extras");
+        assert_eq!(e.ports.len(), 1);
+        assert_eq!(e.ports[0].host, 3000);
+        assert_eq!(e.ports[0].guest, 8080);
+        assert_eq!(e.created.as_deref(), Some("2026-11-07T20:42:06Z"));
     }
 }

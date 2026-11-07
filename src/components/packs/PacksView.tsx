@@ -284,7 +284,7 @@ function BuildTab() {
       return;
     }
     defaultPackDir()
-      .then((dir) => join(dir, `${stem}.smolmachine`))
+      .then((dir) => join(dir, stem))
       .then(setOutput)
       .catch(() => {
         /* leave blank */
@@ -330,10 +330,9 @@ function BuildTab() {
 
   const pickOutput = async () => {
     const picked = await saveDialog({
-      filters: [{ name: "SmolVM pack", extensions: ["smolmachine"] }],
       defaultPath:
         output.trim() ||
-        (await join(await defaultPackDir(), "machine.smolmachine")),
+        (await join(await defaultPackDir(), "machine")),
     });
     if (typeof picked === "string") {
       setOutput(picked);
@@ -476,7 +475,10 @@ function BuildTab() {
         </Field>
       )}
 
-      <Field label="Output path" hint="where to write the .smolmachine">
+      <Field
+        label="Binary output path"
+        hint="stub path; smolvm writes a .smolmachine sidecar next to it"
+      >
         <div className="flex gap-1">
           <input
             {...noAutoCorrect}
@@ -485,7 +487,7 @@ function BuildTab() {
               setOutput(e.target.value);
               setOutputUserEdited(true);
             }}
-            placeholder="/path/to/out.smolmachine"
+            placeholder="/path/to/my-pack"
             className="input flex-1 font-mono"
           />
           <button

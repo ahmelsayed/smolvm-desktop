@@ -9,16 +9,13 @@ use std::path::PathBuf;
 use crate::smolvm::cli;
 use crate::types::{CreatePackOpts, Pack, RunPackOpts};
 
-/// Best-effort listing of packs known locally. smolvm has no `pack ls`
-/// subcommand and no canonical pack directory (users save to arbitrary
-/// `--output` paths). This scans a couple of common locations and stats
-/// each `.smolmachine` file. Use a file picker in the UI for packs
-/// stored elsewhere.
+/// Best-effort listing of packs known locally. `smolvm pack list` only lists
+/// artifacts pulled from a registry; locally built packs live at arbitrary
+/// `--output` paths, so we scan a couple of common locations.
 ///
-/// `smolvm pack create` produces two files per pack (unless `--single-file`):
-/// a Mach-O binary stub at `<name>.smolmachine` and a zstd sidecar at
-/// `<name>.smolmachine.smolmachine`. We list only the binary stub — the
-/// sidecar is derived when needed.
+/// In smolvm 1.33 `pack create -o NAME` writes the executable stub at `NAME`
+/// and the payload at `NAME.smolmachine`. We list the payload, which is what
+/// `pack run --sidecar` and `machine create --from` consume.
 #[tauri::command]
 pub async fn list_packs() -> Result<Vec<Pack>, String> {
     let mut dirs: Vec<PathBuf> = Vec::new();
@@ -38,7 +35,7 @@ pub async fn list_packs() -> Result<Vec<Pack>, String> {
         };
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.is_file() && is_pack_binary(&p) {
+            if p.is_file() && is_pack_payload(&p) {
                 out.push(Pack::stub(&p));
             }
         }
@@ -46,9 +43,10 @@ pub async fn list_packs() -> Result<Vec<Pack>, String> {
     Ok(out)
 }
 
-/// True if `path` looks like the binary stub of a pack (ends in `.smolmachine`
-/// but not the doubled `.smolmachine.smolmachine` of a sidecar).
-pub fn is_pack_binary(path: &std::path::Path) -> bool {
+/// True if `path` looks like a pack payload rather than the executable stub.
+/// The 1.33 layout is `NAME` (stub) + `NAME.smolmachine` (payload); older
+/// versions doubled the extension on the sidecar, which we skip here.
+pub fn is_pack_payload(path: &std::path::Path) -> bool {
     let name = match path.file_name().and_then(|s| s.to_str()) {
         Some(n) => n,
         None => return false,
@@ -57,21 +55,26 @@ pub fn is_pack_binary(path: &std::path::Path) -> bool {
         return false;
     }
     // Strip one .smolmachine and see if what remains still ends in .smolmachine
-    // — that signals this is the sidecar (foo.smolmachine.smolmachine).
+    // — that signals an old-style doubled sidecar.
     let stem = &name[..name.len() - ".smolmachine".len()];
     !stem.to_ascii_lowercase().ends_with(".smolmachine")
 }
 
-/// Derive the sidecar path from a binary stub path. smolvm's convention
-/// is `<binary>.smolmachine` — i.e. the binary's name with `.smolmachine`
-/// appended. If the input already points at a sidecar (doubled extension),
-/// returns it unchanged.
+/// Resolve the payload path from either the executable stub or the payload.
+///
+/// smolvm 1.33 writes `<output>` (stub) and `<output>.smolmachine` (payload).
+/// If `path` names a file whose `<path>.smolmachine` sibling exists, it is the
+/// stub; otherwise a `.smolmachine` path is already the payload. This also
+/// handles older packs whose sidecar was `<stub>.smolmachine.smolmachine`.
 pub fn sidecar_for(path: &str) -> String {
-    let p = std::path::Path::new(path);
-    if !is_pack_binary(p) {
+    let doubled = format!("{path}.smolmachine");
+    if std::path::Path::new(doubled.as_str()).is_file() {
+        return doubled;
+    }
+    if path.to_ascii_lowercase().ends_with(".smolmachine") {
         return path.to_string();
     }
-    format!("{path}.smolmachine")
+    doubled
 }
 
 /// Stat a local pack file. smolvm's `pack inspect` only works on registry
@@ -187,5 +190,35 @@ fn trim_opt(s: &String) -> Option<String> {
         None
     } else {
         Some(t.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_accepts_stub_or_payload() {
+        // A payload path is passed through.
+        assert_eq!(
+            sidecar_for("/tmp/smolvm-test/my-pack.smolmachine"),
+            "/tmp/smolvm-test/my-pack.smolmachine"
+        );
+        // A stub path gets the `.smolmachine` payload suffix.
+        assert_eq!(
+            sidecar_for("/tmp/smolvm-test/my-pack"),
+            "/tmp/smolvm-test/my-pack.smolmachine"
+        );
+    }
+
+    #[test]
+    fn payload_detection_matches_1_33_layout() {
+        use std::path::Path;
+        assert!(is_pack_payload(Path::new("/tmp/my-pack.smolmachine")));
+        assert!(!is_pack_payload(Path::new("/tmp/my-pack")));
+        // Old-style doubled sidecar is not the primary payload.
+        assert!(!is_pack_payload(Path::new(
+            "/tmp/my-pack.smolmachine.smolmachine"
+        )));
     }
 }

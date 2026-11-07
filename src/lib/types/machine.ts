@@ -111,7 +111,6 @@ export interface MachinePatch {
   network?: boolean | null;
   workdir?: string | null;
   gpu?: boolean | null;
-  gpu_vram_mib?: number | null;
   storage_gib?: number | null;
   overlay_gib?: number | null;
   add_volumes?: VolumeMount[];

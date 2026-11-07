@@ -83,8 +83,8 @@ pub async fn list_machines() -> Result<Vec<Machine>, String> {
     let json = cli::run_checked(&["machine", "ls", "-v", "--json"]).await?;
     let mut machines = parser::parse_machines(&json)?;
 
-    // JSON doesn't expose env vars or mount details; fall back to the
-    // text `ls -v` form and merge in the extras.
+    // JSON reports `ports`/`mounts` as counts and has no `created` string;
+    // fall back to the text `ls -v` form and merge in the details.
     if !machines.is_empty() {
         if let Ok(text) = cli::run_checked(&["machine", "ls", "-v"]).await {
             let extras = parser::parse_machine_extras(&text);
@@ -92,6 +92,8 @@ pub async fn list_machines() -> Result<Vec<Machine>, String> {
                 if let Some(e) = extras.get(&m.name) {
                     m.env_count = e.env_count;
                     m.mounts = e.mounts.clone();
+                    m.ports = e.ports.clone();
+                    m.created = e.created.clone();
                 }
             }
         }
@@ -120,7 +122,9 @@ pub async fn stop_machine(name: String) -> Result<(), String> {
 pub async fn delete_machine(name: String) -> Result<(), String> {
     supervisor::stop_for_machine(&name).await;
     exec::kill_sessions_for(&name);
-    cli::run_checked(&["machine", "delete", "-f", &name]).await?;
+    // `delete` requires `--name`; smolvm 1.33 does not accept the machine
+    // name positionally.
+    cli::run_checked(&["machine", "delete", "--name", &name, "-f"]).await?;
     Ok(())
 }
 
@@ -235,9 +239,12 @@ pub async fn create_machine(config: MachineConfig) -> Result<Machine, String> {
         None
     };
 
-    // Positional NAME last, optional
-    if let Some(name) = &config.name {
-        args.push(name.clone());
+    // `machine create` names the machine with `--name`; smolvm 1.33 does not
+    // accept the name positionally. Omit it to let smolvm auto-generate one
+    // (e.g. `vm-<id>`).
+    if let Some(name) = config.name.as_ref().and_then(trim_to_some) {
+        args.push("--name".into());
+        args.push(name);
     }
 
     // Snapshot existing machine names before the call. smolvm auto-generates
@@ -296,11 +303,17 @@ pub async fn update_machine(name: String, patch: MachinePatch) -> Result<Machine
     refetch_machine(&name).await
 }
 
-/// Build the `smolvm machine update <NAME>` argv. Only fields explicitly
+/// Build the `smolvm machine update --name NAME` argv. Only fields explicitly
 /// set in the patch are emitted; everything else is left for upstream to
 /// preserve.
 fn build_update_args(name: &str, patch: &MachinePatch) -> Vec<String> {
-    let mut args: Vec<String> = vec!["machine".into(), "update".into()];
+    // `machine update` requires `--name`; it has no positional NAME.
+    let mut args: Vec<String> = vec![
+        "machine".into(),
+        "update".into(),
+        "--name".into(),
+        name.to_string(),
+    ];
 
     if let Some(cpus) = patch.cpus {
         args.push("--cpus".into());
@@ -327,10 +340,8 @@ fn build_update_args(name: &str, patch: &MachinePatch) -> Vec<String> {
         Some(false) => args.push("--no-gpu".into()),
         None => {}
     }
-    if let Some(vram) = patch.gpu_vram_mib {
-        args.push("--gpu-vram".into());
-        args.push(vram.to_string());
-    }
+    // NB: smolvm 1.33 removed `--gpu-vram` from `machine update` (it is a
+    // create/run-only flag), so the patch does not carry a VRAM field.
     if let Some(storage) = patch.storage_gib {
         args.push("--storage".into());
         args.push(storage.to_string());
@@ -376,7 +387,6 @@ fn build_update_args(name: &str, patch: &MachinePatch) -> Vec<String> {
         }
     }
 
-    args.push(name.to_string());
     args
 }
 
@@ -515,5 +525,27 @@ fn format_volume(vol: &crate::types::VolumeMount) -> String {
         format!("{base}:ro")
     } else {
         base
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_uses_name_flag_not_positional() {
+        let patch = MachinePatch {
+            cpus: Some(2),
+            gpu: Some(true),
+            ..Default::default()
+        };
+        let args = build_update_args("vm1", &patch);
+        assert_eq!(args[0], "machine");
+        assert_eq!(args[1], "update");
+        assert_eq!(args[2], "--name");
+        assert_eq!(args[3], "vm1");
+        assert_eq!(args.iter().filter(|a| a.as_str() == "vm1").count(), 1);
+        // `--gpu-vram` was removed from `machine update` in smolvm 1.33.
+        assert!(!args.iter().any(|a| a.as_str() == "--gpu-vram"));
     }
 }
